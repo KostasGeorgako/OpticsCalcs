@@ -1,9 +1,13 @@
+import time
+
 import numpy as np
 import pandas as pd
 from itertools import product
 from tqdm import tqdm
 from dataclasses import dataclass, asdict
-
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('QtAgg')
 
 def deg_to_rad(theta):
     return theta * np.pi / 180
@@ -59,7 +63,7 @@ class SimulationConfig:
 
     def __post_init__(self):
         self.H_max = self.H_s_top + self.h_tolerance
-        self.delta_range = np.array([0.5, 3.0])
+        self.delta_range = np.array([0.45, 1.35])
         # self.delta_range = np.array([-3.0, -0.5])
         self.D_o_t_range = np.array([0.1, 60])
         self.D_l_s_range = np.array([0.1, 20])
@@ -67,22 +71,23 @@ class SimulationConfig:
 
         self.delta_values = np.arange(
             self.delta_range[0],
-            self.delta_range[1] + self.delta_step_deg,
+            self.delta_range[1] + 1e-12,
             self.delta_step_deg
         )
+        print(self.delta_values)
         self.D_l_s_values = np.arange(
             self.D_l_s_range[0],
-            self.D_l_s_range[1] + self.D_l_s_step,
+            self.D_l_s_range[1] + 1e-12,
             self.D_l_s_step
         )
         self.D_o_t_values = np.arange(
             self.D_o_t_range[0],
-            self.D_o_t_range[1] + self.D_o_t_step,
+            self.D_o_t_range[1] + 1e-12,
             self.D_o_t_step
         )
         self.H_m_values = np.arange(
             self.H_m_range[0],
-            self.H_m_range[1] + self.H_m_step,
+            self.H_m_range[1] + 1e-12,
             self.H_m_step
         )
 
@@ -158,6 +163,7 @@ class Simulator:
             "min_mirror_length_1": ml_min_1,
             "min_mirror_length_2": ml_min_2,
             "max_opening_distance": d_m_o_max,
+            "opening_target_distance": d_o_t,
             "coverage": cov,
         }
 
@@ -218,6 +224,8 @@ class Simulator:
         df.columns = ['_'.join(col) for col in df.columns]
         df = df.reset_index()
 
+        print(df)
+
         # filter
         df = df[
             (df['delta_min'] == delta_range[0]) & (df['delta_max'] == delta_range[1])
@@ -239,7 +247,59 @@ class Simulator:
         return df
 
 
-# === Run Simulation === #
+def plot_theta_curves(configs_df, simulator):
+    cfg = simulator.cfg
+
+    configs_df = configs_df.sort_values('delta', ascending=True)
+    configs_df = configs_df[(configs_df['delta'] >= 0.5) & (configs_df['delta'] <= 3.0)]
+
+    spiked_delta_range = np.arange(0.5, 1.0, 0.01)
+
+    plt.figure(figsize=(10, 6))
+    plt.xlim((0.0, 6.0))
+    plt.ylim((0.0, cfg.L_t / 2))
+    plt.xlabel("Delta (deg)")
+    plt.ylabel("Coverage (cm)")
+    plt.title("Delta - Coverage")
+    plt.grid(True)
+
+    for i, row in configs_df.iterrows():
+        print(row)
+        row_values = {
+            "laser_speaker_distance": row["laser_speaker_distance"],
+            "opening_target_distance": row["opening_target_distance"],
+            "mirror_height": row["mirror_height"],
+            "delta": row["delta"]
+        }
+
+        d_o_t = row["opening_target_distance"]
+        mh2 = row["min_mirror_length_1"] / (2 * np.sqrt(2))
+
+
+        delta_cov_pairs = []
+
+        for spiked_delta in spiked_delta_range:
+            new_delta_deg = row_values["delta"] + spiked_delta
+            new_delta_rad = deg_to_rad(new_delta_deg)
+
+
+            coverage = mh2 + d_o_t * tan(new_delta_rad)
+
+            if coverage <= cfg.L_t / 2:
+                delta_cov_pairs.append((new_delta_deg, coverage))
+
+        delta_values = [pair[0] for pair in delta_cov_pairs]
+        coverage_values = [pair[1] for pair in delta_cov_pairs]
+
+        rate = (coverage_values[-1] - coverage_values[0]) / (delta_values[-1] - delta_values[0])
+        print(rate)
+
+        plt.plot(delta_values, coverage_values, alpha=0.7)
+        plt.pause(0.1)  # short pause for animation effect
+        # plt.cla()
+
+    plt.show()
+
 if __name__ == "__main__":
     pd.set_option("display.max_columns", None)
     pd.set_option("display.width", 200)
@@ -247,15 +307,15 @@ if __name__ == "__main__":
     cfg = SimulationConfig()
     sim = Simulator(cfg)
 
-    observed_delta_range = np.array([0.5, 3.0])
+    observed_delta_range = np.array([0.45, 1.35])
 
 
-    do_simulate = False
+    do_simulate = True
 
     if do_simulate:
         configs_df = sim.calculate_configs()
         print("Saving simulation results...")
-        configs_df.to_csv("../data/simulation_results.csv", index=False)
+        configs_df.to_csv("../../data/simulation_results.csv", index=False)
         print("Done.")
     else:
         print("Loading simulation results from disk...")
@@ -270,5 +330,6 @@ if __name__ == "__main__":
     print(f"\nTotal combinations computed: {len(configs_df)}")
 
     grouped_df = sim.group_configs(configs_df, observed_delta_range)
-    grouped_df.to_csv("../data/grouped_simulation_results.csv", index=False)
+    grouped_df.to_csv("../../data/grouped_simulation_results.csv", index=False)
 
+    # plot_theta_curves(configs_df, sim)
